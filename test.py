@@ -23,13 +23,6 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-filename = dir_path + '/Mass_Train_Dataset/Mass-Train/P_00001/LEFT_CC_1/full.png'
-image_file = tf.read_file(filename)
-image_decoded = tf.image.decode_png(image_file, channels=1)
-with tf.Session() as sess:
-     f, img = sess.run([image_file, image_decoded])
-     print(f[:20])
-     print(img[:20])
 
 def getinfo(path):
     filenames = []
@@ -45,9 +38,9 @@ def getinfo(path):
                     break;
                 else:
                     if(row[9] == "MALIGNANT"):
-                        labels += [1]
+                        labels.append(1)
                     else:
-                        labels += [0]
+                        labels.append(0)
                     filenames.append( dir_path + str("/Mass_Train_Dataset/Mass-Train/" + str(row[11]).replace("\\", "/")))
                 i = i + 1
     else:
@@ -61,24 +54,26 @@ def getinfo(path):
                     break;
                 else:
                     if(row[9] == "MALIGNANT"):
-                        labels += [1]
+                        labels.append(1)
                     else:
-                        labels += [0]
+                        labels.append(0)
                     filenames.append( dir_path + str("/Mass-Testset/Mass-Test/" + str(row[11]).replace("\\", "/")))
                 i = i + 1
+    print(filenames)
     filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
-    labels = tf.convert_to_tensor(labels, dtype=tf.int32)
+    print(labels)
     filename, label = tf.train.slice_input_producer([filenames, labels], shuffle=True)
     image = tf.read_file(filename)
     image = tf.image.decode_png(image, channels=1)
     image = tf.image.resize_images(image, [32,32])
     X, Y = tf.train.batch([image, label], batch_size=tf.size(filenames))
-    return X, Y
+    print(X, Y)
+    return X, Y, labels
 
-trainsetimages, trainsetlabels = getinfo("Mass_Train_Dataset")
+trainsetimages, trainsetlabels, r_trainsetlabels= getinfo("Mass_Train_Dataset")
 print(trainsetimages, trainsetlabels)
 
-testsetimages, testsetlabels = getinfo("Mass-Testset")
+testsetimages, testsetlabels, r_testsetlabels = getinfo("Mass-Testset")
 print(testsetimages, testsetlabels)
 
 model = keras.Sequential()
@@ -103,23 +98,18 @@ model.compile(loss=keras.losses.categorical_crossentropy, optimizer=keras.optimi
 
 print("finish compile")
 
-EPOCHS = 10
-BATCH_SIZE = 128
+batchsize = len(r_trainsetlabels)
+test_size = len(r_testsetlabels)
 
-steps_per_epoch = tf.size(trainsetlabels)//BATCH_SIZE
-validation_steps = tf.size(testsetlabels)//BATCH_SIZE
-
-train_generator = ImageDataGenerator().flow(trainsetimages, to_categorical(tf.Session().run(trainsetlabels)), batch_size=steps_per_epoch)
-validation_generator = ImageDataGenerator().flow(testsetimages, to_categorical(tf.Session().run(testsetlabels)), batch_size=validation_steps)
+trainsetlabels = to_categorical(r_trainsetlabels, 10)
+testsetlabels = to_categorical(r_testsetlabels, 10)
 
 print("after generator")
 
 tensorboard = TensorBoard(log_dir="logs/{}".format(time()))
-model.fit_generator(train_generator, steps_per_epoch=steps_per_epoch, epochs=1,
-                    validation_data=validation_generator, validation_steps=validation_steps,
-                    shuffle=True, callbacks=[tensorboard])
+model.fit(trainsetimages, trainsetlabels, steps_per_epoch=batchsize, verbose=2)
 
-print("after fit_generator")
+print("after fit")
 
 score = model.evaluate(testsetimages, testsetlabels)
 print('Test loss:', score[0])
