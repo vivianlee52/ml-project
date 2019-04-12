@@ -17,6 +17,7 @@ from tensorflow.keras import backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 import csv
+from PIL import Image
 sns.set()
 
 import os
@@ -27,6 +28,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 def getinfo(path):
     filenames = []
     labels = []
+    images = []
     if(path == "Mass_Train_Dataset"):
         with open("Mass_Train_Dataset/mass_case_train.csv") as csvfile:
             readCSV = csv.reader(csvfile, delimiter=',')
@@ -42,6 +44,9 @@ def getinfo(path):
                     else:
                         labels.append(0)
                     filenames.append( dir_path + str("/Mass_Train_Dataset/Mass-Train/" + str(row[11]).replace("\\", "/")))
+                    im_frame = Image.open(filenames[len(filenames)-1])
+                    np_frame = np.array(im_frame.getdata())
+                    images.append(np_frame)
                 i = i + 1
     else:
         with open("Mass-Testset/mass_case_test.csv") as csvfile:
@@ -58,6 +63,9 @@ def getinfo(path):
                     else:
                         labels.append(0)
                     filenames.append( dir_path + str("/Mass-Testset/Mass-Test/" + str(row[11]).replace("\\", "/")))
+                    im_frame = Image.open(filenames[len(filenames)-1])
+                    np_frame = np.array(im_frame.getdata())
+                    images.append(np_frame)
                 i = i + 1
     print(filenames)
     filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
@@ -68,12 +76,12 @@ def getinfo(path):
     image = tf.image.resize_images(image, [32,32])
     X, Y = tf.train.batch([image, label], batch_size=tf.size(filenames))
     print(X, Y)
-    return X, Y, labels
+    return X, Y, images, labels
 
-trainsetimages, trainsetlabels, r_trainsetlabels= getinfo("Mass_Train_Dataset")
+trainsetimages, trainsetlabels, r_trainsetimages, r_trainsetlabels = getinfo("Mass_Train_Dataset")
 print(trainsetimages, trainsetlabels)
 
-testsetimages, testsetlabels, r_testsetlabels = getinfo("Mass-Testset")
+testsetimages, testsetlabels, r_testsetimages, r_testsetlabels = getinfo("Mass-Testset")
 print(testsetimages, testsetlabels)
 
 model = keras.Sequential()
@@ -104,10 +112,13 @@ test_size = len(r_testsetlabels)
 trainsetlabels = to_categorical(r_trainsetlabels, 10)
 testsetlabels = to_categorical(r_testsetlabels, 10)
 
+traingen = ImageDataGenerator()
+traingen.fit(r_trainsetimages)
+
 print("after generator")
 
 tensorboard = TensorBoard(log_dir="logs/{}".format(time()))
-model.fit(trainsetimages, trainsetlabels, steps_per_epoch=batchsize, verbose=2)
+model.fit_generator(traingen.flow(r_trainsetimages, trainsetlabels, batch_size= batchsize), steps_per_epoch=batchsize, epochs=1)
 
 print("after fit")
 
