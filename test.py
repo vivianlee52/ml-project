@@ -1,26 +1,21 @@
-#! /usr/bin/python
-
-import gzip
 import numpy as np
-import pandas as pd
-from time import time
-import IPython.display as display
-#from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 import tensorflow as tf
 import keras
 import keras.layers as layers
+from keras.utils.np_utils import to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from keras.utils.np_utils import to_categorical
 from tensorflow.keras.callbacks import TensorBoard
 from tensorflow.keras import backend
-import matplotlib.pyplot as plt
+from time import time
 import seaborn as sns
 import csv
 from PIL import Image
-sns.set()
-
+from sklearn.metrics import roc_curve, auc
 import os
+
+sns.set()
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -28,7 +23,6 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 def getinfo(path):
     filenames = []
     labels = []
-    images = []
     if(path == "Mass_Train_Dataset"):
         with open("Mass_Train_Dataset/mass_case_train.csv") as csvfile:
             readCSV = csv.reader(csvfile, delimiter=',')
@@ -36,17 +30,14 @@ def getinfo(path):
             for row in readCSV:
                 if i == 0:
                     pass
-                elif i > 2:
-                    break;
+                #elif i > 2:
+                #    break;
                 else:
                     if(row[9] == "MALIGNANT"):
                         labels.append(1)
                     else:
                         labels.append(0)
                     filenames.append( dir_path + str("/Mass_Train_Dataset/Mass-Train/" + str(row[11]).replace("\\", "/")))
-                    im_frame = Image.open(filenames[len(filenames)-1])
-                    np_frame = np.array(im_frame.getdata())
-                    images.append(np_frame)
                 i = i + 1
     else:
         with open("Mass-Testset/mass_case_test.csv") as csvfile:
@@ -55,38 +46,34 @@ def getinfo(path):
             for row in readCSV:
                 if i == 0:
                     pass
-                elif i > 2:
-                    break;
+                #elif i > 2:
+                #    break;
                 else:
                     if(row[9] == "MALIGNANT"):
                         labels.append(1)
                     else:
                         labels.append(0)
                     filenames.append( dir_path + str("/Mass-Testset/Mass-Test/" + str(row[11]).replace("\\", "/")))
-                    im_frame = Image.open(filenames[len(filenames)-1])
-                    np_frame = np.array(im_frame.getdata())
-                    images.append(np_frame)
                 i = i + 1
     print(filenames)
-    filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
     print(labels)
+    filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
     filename, label = tf.train.slice_input_producer([filenames, labels], shuffle=True)
     image = tf.read_file(filename)
     image = tf.image.decode_png(image, channels=1)
-    image = tf.image.resize_images(image, [32,32])
+    image = tf.image.resize_images(image, [256,256])
     X, Y = tf.train.batch([image, label], batch_size=tf.size(filenames))
-    print(X, Y)
-    return X, Y, images, labels
+    return X, labels
 
-trainsetimages, trainsetlabels, r_trainsetimages, r_trainsetlabels = getinfo("Mass_Train_Dataset")
+trainsetimages, trainsetlabels = getinfo("Mass_Train_Dataset")
 print(trainsetimages, trainsetlabels)
 
-testsetimages, testsetlabels, r_testsetimages, r_testsetlabels = getinfo("Mass-Testset")
+testsetimages, testsetlabels = getinfo("Mass-Testset")
 print(testsetimages, testsetlabels)
 
 model = keras.Sequential()
 
-model.add(layers.Conv2D(filters=6, kernel_size=(3, 3), activation='relu', input_shape=(32,32,1)))
+model.add(layers.Conv2D(filters=6, kernel_size=(3, 3), activation='relu', input_shape=(256,256,1)))
 model.add(layers.AveragePooling2D())
 
 model.add(layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu'))
@@ -98,30 +85,58 @@ model.add(layers.Dense(units=120, activation='relu'))
 
 model.add(layers.Dense(units=84, activation='relu'))
 
-model.add(layers.Dense(units=10, activation = 'softmax'))
+model.add(layers.Dense(units=2, activation = 'softmax'))
 
 model.summary()
 
-model.compile(loss=keras.losses.categorical_crossentropy, optimizer=keras.optimizers.Adam(), metrics=['accuracy'])
+model.compile(loss=keras.losses.binary_crossentropy, optimizer=keras.optimizers.Adam(), metrics=['accuracy'])
 
 print("finish compile")
 
-batchsize = len(r_trainsetlabels)
-test_size = len(r_testsetlabels)
+batchsize = len(trainsetlabels)
+test_size = len(testsetlabels)
 
-trainsetlabels = to_categorical(r_trainsetlabels, 10)
-testsetlabels = to_categorical(r_testsetlabels, 10)
+trainsetlabels = to_categorical(trainsetlabels, 2)
+testsetlabels = to_categorical(testsetlabels, 2)
 
-traingen = ImageDataGenerator()
-traingen.fit(r_trainsetimages)
+sess=tf.Session()
+tf.train.start_queue_runners(sess)
 
-print("after generator")
+trainsetimgs = trainsetimages.eval(session=sess)
+testsetimgs = testsetimages.eval(session=sess)
 
 tensorboard = TensorBoard(log_dir="logs/{}".format(time()))
-model.fit_generator(traingen.flow(r_trainsetimages, trainsetlabels, batch_size= batchsize), steps_per_epoch=batchsize, epochs=1)
+model.fit(trainsetimgs, trainsetlabels, steps_per_epoch=batchsize, epochs=1, verbose=1)
+print("finish fit")
 
-print("after fit")
-
-score = model.evaluate(testsetimages, testsetlabels)
+score = model.evaluate(testsetimgs, testsetlabels)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])
+
+y_pred_keras = model.predict(testsetimgs).ravel()
+fpr_keras, tpr_keras, thresholds_keras = roc_curve(testsetlabels.ravel(), y_pred_keras)
+auc_keras = auc(fpr_keras, tpr_keras)
+
+plt.figure(1)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr_keras, tpr_keras, label='LeNet-5 (area = {:.3f})'.format(auc_keras))
+plt.xlabel('False positive rate')
+plt.ylabel('True positive rate')
+plt.title('ROC curve')
+plt.legend(loc='best')
+plt.show()
+plt.savefig('full.png')
+
+"""
+# Zoom in view of the upper left corner.
+plt.figure(2)
+plt.xlim(0, 0.2)
+plt.ylim(0.8, 1)
+plt.plot([0, 1], [0, 1], 'k--')
+plt.plot(fpr_keras, tpr_keras)
+plt.xlabel('False positive rate')
+plt.ylabel('True positive rate')
+plt.title('ROC curve (zoomed in at top left)')
+plt.legend(loc='best')
+"""
+plt.show()
