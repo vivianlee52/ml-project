@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import keras
 import keras.layers as layers
+from keras.models import load_model
 from keras.utils.np_utils import to_categorical
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -20,43 +21,52 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-def getinfo(path):
+def calc(testsetlabels, testresult):
+    result = []
+    for i in range(len(testsetlabels)):
+        if(testsetlabels[i] == testresult[i]):
+            result.append(1)
+        else:
+            result.append(0)
+    return result
+
+def getinfo(path, type):
     filenames = []
     labels = []
-    if(path == "Mass_Train_Dataset"):
-        with open("Mass_Train_Dataset/mass_case_train.csv") as csvfile:
+    if(path == "Calc_Train_Dataset"):
+        with open("Calc_Train_Dataset/calc_case_train.csv") as csvfile:
             readCSV = csv.reader(csvfile, delimiter=',')
             i = 0
             for row in readCSV:
                 if i == 0:
                     pass
-                #elif i > 2:
-                #    break;
                 else:
                     if(row[9] == "MALIGNANT"):
                         labels.append(1)
                     else:
                         labels.append(0)
-                    filenames.append( dir_path + str("/Mass_Train_Dataset/Mass-Train/" + str(row[11]).replace("\\", "/")))
+                    if(type=='roi'):
+                        filenames.append( dir_path + str("/Calc_Train_Dataset/Calc-Train/" + str(row[12]).replace("\\", "/")))
+                    else:
+                        filenames.append( dir_path + str("/Calc_Train_Dataset/Calc-Train/" + str(row[11]).replace("\\", "/")))
                 i = i + 1
     else:
-        with open("Mass-Testset/mass_case_test.csv") as csvfile:
+        with open("Calc-Testset/calc_case_test.csv") as csvfile:
             readCSV = csv.reader(csvfile, delimiter=',')
             i = 0
             for row in readCSV:
                 if i == 0:
                     pass
-                #elif i > 2:
-                #    break;
                 else:
                     if(row[9] == "MALIGNANT"):
                         labels.append(1)
                     else:
                         labels.append(0)
-                    filenames.append( dir_path + str("/Mass-Testset/Mass-Test/" + str(row[11]).replace("\\", "/")))
+                    if(type=='roi'):
+                        filenames.append( dir_path + str("/Calc-Testset/Calc-Test/" + str(row[12]).replace("\\", "/")))
+                    else:
+                        filenames.append( dir_path + str("/Calc-Testset/Calc-Test/" + str(row[11]).replace("\\", "/")))
                 i = i + 1
-    print(filenames)
-    print(labels)
     filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
     filename, label = tf.train.slice_input_producer([filenames, labels], shuffle=True)
     image = tf.read_file(filename)
@@ -65,26 +75,29 @@ def getinfo(path):
     X, Y = tf.train.batch([image, label], batch_size=tf.size(filenames))
     return X, labels
 
-trainsetimages, trainsetlabels = getinfo("Mass_Train_Dataset")
-print(trainsetimages, trainsetlabels)
+type = 'full'
+epochs = 30
 
-testsetimages, testsetlabels = getinfo("Mass-Testset")
-print(testsetimages, testsetlabels)
+trainsetimages, trainsetlabels = getinfo("Calc_Train_Dataset", type)
+
+testsetimages, testsetlabels = getinfo("Calc-Testset", type)
 
 model = keras.Sequential()
 
 model.add(layers.Conv2D(filters=6, kernel_size=(3, 3), activation='relu', input_shape=(256,256,1)))
-model.add(layers.AveragePooling2D())
+model.add(layers.Dropout(0.5))
+model.add(layers.MaxPooling2D())
 
 model.add(layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu'))
-model.add(layers.AveragePooling2D())
+model.add(layers.Dropout(0.5))
+model.add(layers.MaxPooling2D())
 
 model.add(layers.Flatten())
 
 model.add(layers.Dense(units=120, activation='relu'))
-
+model.add(layers.Dropout(0.4))
 model.add(layers.Dense(units=84, activation='relu'))
-
+model.add(layers.Dropout(0.4))
 model.add(layers.Dense(units=2, activation = 'softmax'))
 
 model.summary()
@@ -94,38 +107,55 @@ model.compile(loss=keras.losses.binary_crossentropy, optimizer=keras.optimizers.
 print("finish compile")
 
 batchsize = len(trainsetlabels)
-test_size = len(testsetlabels)
+testsize = len(testsetlabels)
 
-trainsetlabels = to_categorical(trainsetlabels, 2)
-testsetlabels = to_categorical(testsetlabels, 2)
+cattrainsetlabels = to_categorical(trainsetlabels, 2)
+cattestsetlabels = to_categorical(testsetlabels, 2)
 
 sess=tf.Session()
 tf.train.start_queue_runners(sess)
 
+print(trainsetimages)
+print(testsetimages)
+
 trainsetimgs = trainsetimages.eval(session=sess)
 testsetimgs = testsetimages.eval(session=sess)
 
+print(trainsetimgs[0])
+print(trainsetimgs[1])
+
 tensorboard = TensorBoard(log_dir="logs/{}".format(time()))
-model.fit(trainsetimgs, trainsetlabels, steps_per_epoch=batchsize, epochs=1, verbose=1)
+
+model.fit(trainsetimgs, cattrainsetlabels, epochs=epochs, verbose=1, shuffle=True)
 print("finish fit")
 
-score = model.evaluate(testsetimgs, testsetlabels)
+model.save(type + str(epochs) + "max.h5")
+
+score = model.evaluate(testsetimgs, cattestsetlabels)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
-y_pred_keras = model.predict(testsetimgs).ravel()
-fpr_keras, tpr_keras, thresholds_keras = roc_curve(testsetlabels.ravel(), y_pred_keras)
+
+
+#ROC
+model = load_model(type + str(epochs) + "max.h5")
+
+y_pred = model.predict(testsetimgs)
+y_pred = y_pred.ravel() #flatten both pred and true y
+cattestsetlabels = cattestsetlabels.ravel()
+
+print(y_pred)
+
+fpr_keras, tpr_keras, thresholds_keras = roc_curve(cattestsetlabels, y_pred)
 auc_keras = auc(fpr_keras, tpr_keras)
 
 plt.figure(1)
 plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr_keras, tpr_keras, label='LeNet-5 (area = {:.3f})'.format(auc_keras))
-plt.xlabel('False positive rate')
-plt.ylabel('True positive rate')
-plt.title('ROC curve')
+plt.plot(fpr_keras, tpr_keras, label='LeNet-5(area = {:.3f})'.format(auc_keras))
 plt.legend(loc='best')
+plt.title('ROC curve for LeNet')
 plt.show()
-plt.savefig('full.png')
+plt.savefig( type + str(epochs) + 'max.png')
 
 """
 # Zoom in view of the upper left corner.
