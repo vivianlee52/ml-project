@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import keras
@@ -6,14 +7,12 @@ import keras.layers as layers
 from keras.models import load_model
 from keras.utils.np_utils import to_categorical
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.callbacks import TensorBoard
 from tensorflow.keras import backend
-from time import time
-import seaborn as sns
 import csv
+import seaborn as sns
+from numpy import genfromtxt
 from PIL import Image
-from sklearn.metrics import roc_curve, auc
+from sklearn.metrics import roc_curve, auc, confusion_matrix
 import os
 
 sns.set()
@@ -21,7 +20,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-def getinfo(path, type):
+def getinfo(path, type, size, channel):
     filenames = []
     labels = []
     if(path == "Calc_Train_Dataset"):
@@ -49,16 +48,17 @@ def getinfo(path, type):
     filenames = tf.convert_to_tensor(filenames, dtype=tf.string)
     filename, label = tf.train.slice_input_producer([filenames, labels], shuffle=True)
     image = tf.read_file(filename)
-    image = tf.image.decode_png(image, channels=1)
-    image = tf.image.resize_images(image, [32,32])
+    image = tf.image.decode_png(image, channels=channel)
+    image = tf.image.resize_images(image, [size,size])
     X, Y = tf.train.batch([image, label], batch_size=tf.size(filenames))
     return X, labels
 
 type = 'full'
-epochs = 200
+epochs = 100
 
-trainsetimages, trainsetlabels = getinfo("Calc_Train_Dataset", type)
-testsetimages, testsetlabels = getinfo("Calc-Testset", type)
+trainsetimages, trainsetlabels = getinfo("Calc_Train_Dataset", type, 32, 1)
+testsetimages, testsetlabels = getinfo("Calc-Testset", type, 32, 1)
+
 
 model = keras.Sequential()
 model.add(layers.Conv2D(filters=6, kernel_size=(3, 3), activation='relu', input_shape=(32,32,1)))
@@ -68,12 +68,11 @@ model.add(layers.AveragePooling2D())
 model.add(layers.Flatten())
 model.add(layers.Dense(units=120, activation='relu'))
 model.add(layers.Dense(units=84, activation='relu'))
+model.add(layers.Dropout(0.5))
 model.add(layers.Dense(units=2, activation = 'softmax'))
 model.summary()
 model.compile(loss=keras.losses.binary_crossentropy, optimizer=keras.optimizers.Adam(), metrics=['accuracy'])
 
-batchsize = len(trainsetlabels)
-testsize = len(testsetlabels)
 cattrainsetlabels = to_categorical(trainsetlabels, 2)
 cattestsetlabels = to_categorical(testsetlabels, 2)
 sess=tf.Session()
@@ -82,49 +81,33 @@ print(trainsetimages)
 print(testsetimages)
 trainsetimgs = trainsetimages.eval(session=sess)
 testsetimgs = testsetimages.eval(session=sess)
-print(trainsetimgs[0])
-print(trainsetimgs[1])
-
-#tensorboard = TensorBoard(log_dir="logs/{}".format(time()))
+batchsize = len(trainsetlabels)
+testsize = len(testsetlabels)
 
 model.fit(trainsetimgs, cattrainsetlabels, epochs=epochs, verbose=1, shuffle=True)
 model.save(type + str(epochs) + ".h5")
-print("Finish fit")
+
+model = load_model(type + str(epochs) + ".h5")
 
 score = model.evaluate(testsetimgs, cattestsetlabels)
 print('Test loss:', score[0])
 print('Test accuracy:', score[1])
 
 #ROC
-model = load_model(type + str(epochs) + ".h5")
 
 y_pred = model.predict(testsetimgs)
-y_pred = y_pred.ravel() #flatten both pred and true y
+np.savetxt('lenet.csv', y_pred, delimiter=",")
+#y_pred = genfromtxt('lenet.csv', delimiter=',')
+y_pred = y_pred.ravel() #flatten bot1h pred and true y
 cattestsetlabels = cattestsetlabels.ravel()
 
-print(y_pred)
-print(cattestsetlabels)
-
-fpr_keras, tpr_keras, thresholds_keras = roc_curve(cattestsetlabels, y_pred)
-auc_keras = auc(fpr_keras, tpr_keras)
+fpr, tpr, thresholds = roc_curve(cattestsetlabels, y_pred)
+auc = auc(fpr, tpr)
 
 plt.figure(1)
 plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr_keras, tpr_keras, label='LeNet-5(area = {:.3f})'.format(auc_keras))
+plt.plot(fpr, tpr, label='LeNet-5(area = {:.3f})'.format(auc))
 plt.legend(loc='best')
-plt.title('ROC curve for LeNet-5')
+plt.title('ROC curve')
 plt.show()
-plt.savefig( type + str(epochs) + '.png')
-
-"""
-# Zoom in view of the upper left corner.
-plt.figure(2)
-plt.xlim(0, 0.2)
-plt.ylim(0.8, 1)
-plt.plot([0, 1], [0, 1], 'k--')
-plt.plot(fpr_keras, tpr_keras)
-plt.xlabel('False positive rate')
-plt.ylabel('True positive rate')
-plt.title('ROC curve (zoomed in at top left)')
-plt.legend(loc='best')
-"""
+plt.savefig('roc_lenet.png')
